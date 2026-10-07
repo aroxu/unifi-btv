@@ -22,6 +22,17 @@ UniFi sysctl behavior, persistence or playback. Sender behavior was checked with
 mock socket; lifecycle and intervention policy were checked with fixtures/mocks.
 The CI workflow is provided but has not been run on GitHub in this session.
 
+## One-line installer follow-up (2026-10-07)
+
+- Added seven bootstrap tests using a mocked download and real shell/tar operations:
+  piped Bash and POSIX shell execution, complete archive extraction, failed download
+  cleanup, invalid archive rejection, missing required-file rejection, invalid hook
+  rejection and existing destination preservation. Total: 24 tests passed.
+- ShellCheck 0.10.0 passed after the bootstrap changes.
+- Bootstrap tests use `--download-only`; no service or gateway setting is modified.
+- The one-line source endpoint is `aroxu/unifi-btv` on `main`; a single codeload archive
+  supplies all files from the same snapshot. Actual gateway installation remains pending.
+
 ## Gateway acceptance procedure (pending)
 
 1. Record model, UniFi OS version, Python version, proxy configuration and interface

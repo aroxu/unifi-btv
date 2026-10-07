@@ -1,5 +1,9 @@
 # unifi-iptv-igmp-keeper
 
+[English](README.md) | [한국어](README.ko.md)
+
+Repository: [aroxu/unifi-btv](https://github.com/aroxu/unifi-btv)
+
 A conservative, adaptive IPv4 multicast IPTV membership keeper for Linux-based
 UniFi OS / UCG gateways. Python 3.8+, standard library only. MIT licensed.
 
@@ -57,6 +61,7 @@ Run on the UniFi OS **host**, as root for live capture and intervention:
 
 - Linux with IPv4 multicast routing, `/proc`, `/sys`, AF_PACKET and classic BPF.
 - `/usr/bin/python3` 3.8 or later; `systemd-run`, `systemctl`, POSIX shell and `install`.
+- For one-line installation: `curl`, `tar`, `mktemp` and `bash`.
 - An IPv4 address on each selected upstream/downstream interface.
 - An enabled `udm-boot.service` running `/data/on_boot.d` scripts, from
   [unifi-utilities/unifi-common](https://github.com/unifi-utilities/unifi-common).
@@ -96,6 +101,29 @@ Auto cannot learn a topology from nonexistent routes. Setting overrides still do
 not allow membership refresh without actual routes, traffic and client evidence.
 
 ## Install / update
+
+One-line install/update in a **root SSH session on the gateway**, after the on-boot
+framework and requirements above are in place:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aroxu/unifi-btv/main/install.sh | bash
+```
+
+The piped installer downloads one archive of `main`, validates its required files,
+then installs and starts the daemon. It cleans up temporary files on success/failure
+and preserves an existing configuration. Missing prerequisites or a failed download
+abort before replacing the installation. `main` tracks the latest code.
+
+To download the source for inspection without installing (no root required):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aroxu/unifi-btv/main/install.sh | bash -s -- --download-only ./unifi-btv-source
+```
+
+Choose a destination that does not already exist. You can then inspect the source,
+run the dry-run commands above from that directory, and install locally.
+
+From an existing checkout:
 
 ```sh
 sudo sh install.sh
