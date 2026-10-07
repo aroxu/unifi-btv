@@ -1,4 +1,4 @@
-# unifi-iptv-igmp-keeper
+# unifi-btv
 
 [English](README.md) | [한국어](README.ko.md)
 
@@ -6,8 +6,7 @@
 
 UniFi OS / UCG 계열 게이트웨이에서 IPv4 multicast IPTV의 IGMP membership을
 유지하는 adaptive daemon입니다. Python 3.8 이상과 표준 라이브러리만 사용하며,
-MIT 라이선스로 배포합니다. 저장소 이름은 `unifi-btv`이지만 프로그램은 B tv에
-고정된 인터페이스나 셋톱박스 MAC을 사용하지 않습니다.
+MIT 라이선스로 배포합니다. 프로그램은 B tv에 고정된 인터페이스나 셋톱박스 MAC을 사용하지 않습니다.
 
 **현재 상태: 초기 구현과 로컬 검증 완료, 실제 게이트웨이 검증 대기.**
 기존 고정 설정 workaround는 SK Broadband B tv 환경에서 동작했습니다.
@@ -31,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/aroxu/unifi-btv/main/install.sh | b
 ```
 
 `main` 브랜치의 소스 압축 파일을 한 번에 받아 필요한 파일과 설정을 확인한 뒤
-설치하고 서비스를 시작합니다. 기존 `/data/iptv-igmp-keeper/config.ini`는 유지하므로,
+설치하고 서비스를 시작합니다. 기존 `/data/unifi-btv/config.ini`는 유지하므로,
 업데이트할 때도 같은 명령을 실행하면 됩니다. 요구사항 확인이나 다운로드가
 실패하면 기존 설치 파일을 교체하기 전에 중단합니다. 임시 다운로드 파일은
 성공·실패 시 정리합니다. `main`은 최신 코드를 가리킵니다.
@@ -109,9 +108,9 @@ Linux 기본 multicast table과 현재 network namespace만 지원하며 VRF·�
 소스 디렉터리에서 실행합니다. 실제 IGMP 수집에는 root 권한이 필요합니다.
 
 ```sh
-python3 src/iptv-igmp-keeper.py --config config/config.example.ini --check-config
-python3 src/iptv-igmp-keeper.py --config config/config.example.ini --discover
-sudo python3 src/iptv-igmp-keeper.py --config config/config.example.ini --dry-run --once --observe-seconds 450
+python3 src/unifi-btv.py --config config/config.example.ini --check-config
+python3 src/unifi-btv.py --config config/config.example.ini --discover
+sudo python3 src/unifi-btv.py --config config/config.example.ini --dry-run --once --observe-seconds 450
 ```
 
 `--discover`는 파일을 읽기만 합니다. `--dry-run`은 패킷·sysctl·로그·상태 파일을
@@ -140,26 +139,41 @@ downstream = br935
 sudo sh install.sh
 ```
 
-설치 경로는 `/data/iptv-igmp-keeper`이며 부팅 hook은
-`/data/on_boot.d/50-iptv-igmp-keeper.sh`입니다. hook은 부팅마다 transient systemd
+설치 경로는 `/data/unifi-btv`이며 부팅 hook은
+`/data/on_boot.d/50-unifi-btv.sh`입니다. hook은 부팅마다 transient systemd
 서비스를 생성합니다. 이 서비스에 `systemctl enable`을 실행하지 않습니다.
 실패 시 재시작하며 SIGTERM으로 종료하면 자신이 변경한 sysctl을 복원합니다.
 
-설정은 `/data/iptv-igmp-keeper/config.ini`에서 변경합니다. 반영하려면:
+설정은 `/data/unifi-btv/config.ini`에서 변경합니다. 반영하려면:
 
 ```sh
-systemctl restart iptv-igmp-keeper.service
+systemctl restart unifi-btv.service
 ```
 
 상태 확인:
 
 ```sh
-python3 /data/iptv-igmp-keeper/keeper.py --config /data/iptv-igmp-keeper/config.ini --status
-systemctl status iptv-igmp-keeper.service --no-pager
+python3 /data/unifi-btv/unifi-btv.py --config /data/unifi-btv/config.ini --status
+systemctl status unifi-btv.service --no-pager
 ```
 
 수동 실행에서 설치된 설정을 읽으려면 `--config`를 지정해야 합니다.
 생략하면 프로그램의 기본 설정을 사용합니다. 잘못된 설정은 검증 단계에서 실패합니다.
+
+## 기존 이름에서 업데이트 (0.1.2)
+
+프로젝트와 실행 파일·서비스·기본 경로를 `unifi-btv`로 통일했습니다.
+소스는 `src/unifi-btv.py`, 서비스는 `unifi-btv.service`, 설치된 실행 파일은
+`/data/unifi-btv/unifi-btv.py`입니다. 상태 파일은 `/run/unifi-btv/status.json`,
+부팅 hook은 `/data/on_boot.d/50-unifi-btv.sh`입니다.
+
+기존 `unifi-iptv-igmp-keeper` 설치도 같은 1라인 명령으로 업데이트할 수 있습니다.
+설치 스크립트가 이전 서비스를 중지하고 자신이 변경한 버전 설정을 복원합니다.
+새 설정이 없으면 `/data/iptv-igmp-keeper/config.ini`를 이전하며, 이전 기본 로그·상태
+경로만 새 이름으로 바꿉니다. 직접 지정한 경로와 나머지 설정은 보존합니다.
+원본 설정은 `/data/unifi-btv/config.legacy.ini`에 백업하고 기본 로그도 새 로그를
+덮어쓰지 않고 복사합니다. 이전 boot hook과 실행 파일은 제거하며 이전 설정·로그는
+백업으로 남깁니다. 새 경로에 설정이 이미 있으면 해당 설정을 우선 사용합니다.
 
 ## 갱신 주기 / 만료 / 로그
 
@@ -173,9 +187,9 @@ systemctl status iptv-igmp-keeper.service --no-pager
 갱신할 수 있지만 오래 중단된 그룹을 계속 유지하지 않습니다. IGMPv2 Report suppression
 때문에 일부 클라이언트가 관측되지 않을 수 있어 구독 추적은 보수적으로 동작합니다.
 
-로그는 `/data/iptv-igmp-keeper/keeper.log`에 기록하며 **512 KiB × 최대 3개**, 약
+로그는 `/data/unifi-btv/unifi-btv.log`에 기록하며 **512 KiB × 최대 3개**, 약
 1.5 MiB로 회전합니다. 상태 변경·fallback Query·오류와 시간당 heartbeat만 남깁니다.
-상태 파일은 `/run/iptv-igmp-keeper`에 기록하여 지속 저장소의 쓰기를 줄입니다.
+상태 파일은 `/run/unifi-btv`에 기록하여 지속 저장소의 쓰기를 줄입니다.
 `--status`는 마지막 snapshot과 경과 시간을 보여주며 없거나 오래되면 종료 코드 1을
 반환합니다. `reports_sent`와 `fallback_queries_sent`는 시작 후 전송 호출이 성공한
 횟수입니다. `last_report_age_seconds`, `memberships`, `source_filter_groups`로
@@ -190,9 +204,9 @@ systemctl status iptv-igmp-keeper.service --no-pager
 ## 삭제
 
 ```sh
-sudo sh /data/iptv-igmp-keeper/uninstall.sh
+sudo sh /data/unifi-btv/uninstall.sh
 # 기본 설정과 로그까지 삭제하려면:
-sudo sh /data/iptv-igmp-keeper/uninstall.sh --purge
+sudo sh /data/unifi-btv/uninstall.sh --purge
 ```
 
 서비스를 중지하고 자신이 변경한 값을 복원한 뒤 실행 파일과 boot hook을 제거합니다.
@@ -218,8 +232,8 @@ IGMP 변경과 QoS 변경은 하나씩 적용하여 원인을 확인합니다.
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m py_compile src/iptv-igmp-keeper.py
-shellcheck install.sh uninstall.sh unifi/50-iptv-igmp-keeper.sh
+python3 -m py_compile src/unifi-btv.py
+shellcheck install.sh uninstall.sh unifi/50-unifi-btv.sh
 ```
 
 runtime pip 패키지는 필요하지 않습니다. 보고할 때는 기기·UniFi OS 버전, Query 버전,

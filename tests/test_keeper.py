@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SPEC = importlib.util.spec_from_file_location('keeper', Path(__file__).resolve().parents[1] / 'src/iptv-igmp-keeper.py')
+SPEC = importlib.util.spec_from_file_location('keeper', Path(__file__).resolve().parents[1] / 'src/unifi-btv.py')
 k = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(k)
 

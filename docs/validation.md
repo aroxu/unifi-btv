@@ -47,6 +47,18 @@ The CI workflow is provided but has not been run on GitHub in this session.
 - The reported gateway log confirms disabled renewal due to the old source-filter
   guard, but does not reveal its triggering group. Post-update playback is pending.
 
+## Project rename and migration: 0.1.2 (2026-10-08)
+
+- Renamed the public project, source file, service, boot hook and default log/state paths
+  to `unifi-btv`. Legacy identifiers remain only for migration compatibility.
+- 38 tests passed: the preceding 33 plus two config migration tests and three isolated
+  installer tests. Tests cover legacy settings/log backups, removal of the old boot
+  hook, both service stops, validation failure before teardown, custom paths and
+  repeated installation preserving a pre-existing new config.
+- Installer tests run the full script with temporary filesystem roots and mocked
+  service commands. They do not install on the real host or validate a gateway reboot.
+- ShellCheck 0.10.0 and Python compilation passed.
+
 ## Gateway acceptance procedure (pending)
 
 1. Record model, UniFi OS version, Python version, proxy configuration and interface

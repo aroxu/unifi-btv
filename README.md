@@ -1,4 +1,4 @@
-# unifi-iptv-igmp-keeper
+# unifi-btv
 
 [English](README.md) | [한국어](README.ko.md)
 
@@ -85,9 +85,9 @@ prerequisites; verify them again after upgrades.
 Copy this repository to your gateway, enter its directory, and run:
 
 ```sh
-python3 src/iptv-igmp-keeper.py --config config/config.example.ini --check-config
-python3 src/iptv-igmp-keeper.py --config config/config.example.ini --discover
-python3 src/iptv-igmp-keeper.py --config config/config.example.ini --dry-run --once --observe-seconds 450
+python3 src/unifi-btv.py --config config/config.example.ini --check-config
+python3 src/unifi-btv.py --config config/config.example.ini --discover
+python3 src/unifi-btv.py --config config/config.example.ini --dry-run --once --observe-seconds 450
 ```
 
 `--discover` is read-only and needs no raw socket. `--dry-run` uses live capture when
@@ -136,18 +136,33 @@ From an existing checkout:
 
 ```sh
 sudo sh install.sh
-sudo python3 /data/iptv-igmp-keeper/keeper.py --config /data/iptv-igmp-keeper/config.ini --status
-systemctl status iptv-igmp-keeper.service --no-pager
+sudo python3 /data/unifi-btv/unifi-btv.py --config /data/unifi-btv/config.ini --status
+systemctl status unifi-btv.service --no-pager
 ```
 
-The installer preserves existing `/data/iptv-igmp-keeper/config.ini`, installs the
+The installer preserves existing `/data/unifi-btv/config.ini`, installs the
 boot hook and starts a transient systemd service. Re-running it updates code.
-Edit that config and run `systemctl restart iptv-igmp-keeper.service` to apply changes.
+Edit that config and run `systemctl restart unifi-btv.service` to apply changes.
 The boot hook recreates the transient service each boot; do not `systemctl enable`
 this transient unit. It restarts after failures and restores owned settings on SIGTERM.
 
 `--config` must be supplied to manual invocations to read the installed configuration;
 omitting it selects built-in defaults. Invalid settings fail validation.
+
+## Migration from the previous name (0.1.2)
+
+The project, source file, service and default paths are now named `unifi-btv`:
+`src/unifi-btv.py`, `unifi-btv.service`, `/data/unifi-btv/unifi-btv.py`,
+`/run/unifi-btv/status.json` and `/data/on_boot.d/50-unifi-btv.sh`.
+
+The same one-line installer upgrades an existing `unifi-iptv-igmp-keeper` installation.
+It stops the old `iptv-igmp-keeper.service`, restores any owned version override,
+and migrates `/data/iptv-igmp-keeper/config.ini` if no new config exists. Only the old
+known default log/state paths are translated; custom paths and other settings are
+preserved. A raw config backup is saved as `/data/unifi-btv/config.legacy.ini`, and
+existing default logs are copied without overwriting new logs. The legacy boot hook
+and executables are removed after installation; old config/log files remain as backups.
+A pre-existing `/data/unifi-btv/config.ini` takes precedence on repeated installs.
 
 ## Timing, logs and status
 
@@ -162,9 +177,9 @@ grace allows recovery of a recently stalled stream. A long-dead stream is delibe
 not resurrected without new traffic. v2 report suppression can hide individual clients;
 this tracker is conservative and is not an authoritative subscriber database.
 
-Logs: `/data/iptv-igmp-keeper/keeper.log`, 512 KiB per file, two backups (about 1.5 MiB).
+Logs: `/data/unifi-btv/unifi-btv.log`, 512 KiB per file, two backups (about 1.5 MiB).
 Only changes, fallback queries, errors and hourly heartbeat are logged. Status is
-atomically replaced under `/run/iptv-igmp-keeper`, avoiding persistent flash writes.
+atomically replaced under `/run/unifi-btv`, avoiding persistent flash writes.
 `--status` displays the latest snapshot and its age; stale/missing status exits 1.
 `reports_sent` and `fallback_queries_sent` count successful send calls since startup;
 `last_report_age_seconds`, `memberships` and `source_filter_groups` explain whether
@@ -181,9 +196,9 @@ version-management tools. Persistent administrator sysctl settings are not edite
 ## Uninstall
 
 ```sh
-sudo sh /data/iptv-igmp-keeper/uninstall.sh
+sudo sh /data/unifi-btv/uninstall.sh
 # Or remove the default config and logs as well:
-sudo sh /data/iptv-igmp-keeper/uninstall.sh --purge
+sudo sh /data/unifi-btv/uninstall.sh --purge
 ```
 
 Stops the service, restores owned settings and removes the boot hook and executable.
@@ -195,8 +210,8 @@ shared on-boot framework is never removed.
 
 ```sh
 python3 -m unittest discover -s tests -v
-python3 -m py_compile src/iptv-igmp-keeper.py
-shellcheck install.sh uninstall.sh unifi/50-iptv-igmp-keeper.sh
+python3 -m py_compile src/unifi-btv.py
+shellcheck install.sh uninstall.sh unifi/50-unifi-btv.sh
 ```
 
 No runtime pip dependencies. CI runs unit tests and shell lint. Contributions should

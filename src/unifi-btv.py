@@ -19,7 +19,7 @@ import struct
 import sys
 import time
 
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 DEFAULTS = {
     'interfaces': {'upstream': 'auto', 'downstream': 'auto'},
     'igmp': {'force_version': 'auto', 'query_downstream': 'fallback',
@@ -27,11 +27,11 @@ DEFAULTS = {
              'traffic_grace_seconds': '90', 'fallback_after_seconds': '150'},
     'general': {'refresh_interval': 'auto', 'scan_interval': '5',
                 'heartbeat_interval': '3600',
-                'log_path': '/data/iptv-igmp-keeper/keeper.log',
-                'state_path': '/run/iptv-igmp-keeper/status.json'},
+                'log_path': '/data/unifi-btv/unifi-btv.log',
+                'state_path': '/run/unifi-btv/status.json'},
     'clients': {'macs': 'auto'},
 }
-LOG = logging.getLogger('iptv-igmp-keeper')
+LOG = logging.getLogger('unifi-btv')
 
 
 def checksum(data):
@@ -90,6 +90,20 @@ def read_config(path=None):
     if cfg.getfloat('igmp', 'fallback_after_seconds') + 10 >= cfg.getfloat('igmp', 'stale_group_seconds'):
         raise ValueError('fallback_after_seconds must be at least 10s below stale_group_seconds')
     return cfg
+
+
+def migrate_legacy_config(source, destination):
+    """Translate known legacy default paths while preserving explicit overrides."""
+    cfg = read_config(source)
+    mapping = {
+        'log_path': ('/data/iptv-igmp-keeper/keeper.log', '/data/unifi-btv/unifi-btv.log'),
+        'state_path': ('/run/iptv-igmp-keeper/status.json', '/run/unifi-btv/status.json'),
+    }
+    for key, (old, new) in mapping.items():
+        if cfg['general'][key] == old:
+            cfg['general'][key] = new
+    with open(destination, 'w', encoding='utf-8') as stream:
+        cfg.write(stream)
 
 
 def proc_address(value):

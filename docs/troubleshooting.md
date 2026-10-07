@@ -12,7 +12,7 @@ Update in a root SSH session:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aroxu/unifi-btv/main/install.sh | bash
-python3 /data/iptv-igmp-keeper/keeper.py --version
+python3 /data/unifi-btv/unifi-btv.py --version
 ```
 
 Expect `0.1.1` or newer. After updating, change the TV channel once to establish
@@ -20,7 +20,7 @@ fresh reports and traffic; a long-expired stream is not automatically resurrecte
 Then inspect status after the upstream Query has been observed (allow a few minutes):
 
 ```sh
-python3 /data/iptv-igmp-keeper/keeper.py --config /data/iptv-igmp-keeper/config.ini --status
+python3 /data/unifi-btv/unifi-btv.py --config /data/unifi-btv/config.ini --status
 ```
 
 For an eligible v2 ASM service, `enabled` should be true, `active_groups` should
@@ -92,10 +92,10 @@ and congestion. A membership keeper cannot repair packet scheduling or bandwidth
 ## Service / boot / reprovision
 
 ```sh
-systemctl status udm-boot.service iptv-igmp-keeper.service --no-pager
-journalctl -u iptv-igmp-keeper.service -n 50 --no-pager
-cat /data/iptv-igmp-keeper/keeper.log
-ls -l /data/on_boot.d/50-iptv-igmp-keeper.sh
+systemctl status udm-boot.service unifi-btv.service --no-pager
+journalctl -u unifi-btv.service -n 50 --no-pager
+cat /data/unifi-btv/unifi-btv.log
+ls -l /data/on_boot.d/50-unifi-btv.sh
 ```
 
 Transient services are recreated by the boot hook, not enabled with `systemctl enable`.
@@ -108,7 +108,7 @@ video traffic. Running inside a restricted container is not supported.
 ## Stop intervention / restore
 
 ```sh
-systemctl stop iptv-igmp-keeper.service
+systemctl stop unifi-btv.service
 ```
 
 SIGTERM restores owned upstream sysctl settings. To retain observation while disabling
