@@ -14,6 +14,10 @@ MIT 라이선스로 배포합니다. 저장소 이름은 `unifi-btv`이지만 �
 새 adaptive 버전은 실제 UCG와 여러 UniFi 펌웨어에서 추가 확인이 필요합니다.
 [기존 B tv 실험 기록](docs/skb-btv.md)과 [검증 범위](docs/validation.md)를 참고하세요.
 
+**0.1.0에서 몇 분 뒤 재생이 멈추고 `source-filter/SSM evidence present`가 표시되면
+0.1.1로 업데이트하세요.** 로컬 제어용 multicast 구독을 SSM으로 오분류하여 갱신을
+중단하던 문제를 수정했습니다. 실제 source-filter와 SSM 구독에 대한 보호는 유지합니다.
+
 기존 IGMP proxy와 multicast routing 구성이 필요합니다. IPTV VLAN, DHCP,
 방화벽이나 multicast route를 자동으로 설정하는 도구는 아닙니다.
 IGMPv3 source filtering과 IPv6 MLD는 지원하지 않습니다.
@@ -70,9 +74,10 @@ on-boot framework는 해당 저장소의 설치 안내에 따라 먼저 설치�
 4. 최근 클라이언트 Report, 대응하는 multicast route, 최근 증가한 패킷 카운터가
    모두 확인된 ASM 그룹만 갱신합니다. `224.0.0.0/24`, SSM 범위인 `232.0.0.0/8`은
    갱신하지 않으며 upstream Leave를 만들어 보내지 않습니다.
-5. v2 보정이 허용된 상태에서 downstream 트래픽은 살아 있는데 클라이언트 Report와
-   외부 Query가 모두 150초 동안 없으면 General Query를 fallback으로 보냅니다.
-   인터페이스별로 빈도를 제한하며 설정에서 끌 수 있습니다.
+5. v2 보정이 허용된 상태에서 경로와 트래픽이 확인된 ASM 그룹의 클라이언트 Report가
+   150초 동안 없으면 General Query를 fallback으로 보냅니다. 외부 Query의 응답 대기
+   시간은 존중하지만, 응답이 없으면 재시도합니다. 다른 채널의 Report로 인해 누락된
+   그룹의 확인이 미뤄지지 않습니다. 인터페이스별로 빈도를 제한하며 설정에서 끌 수 있습니다.
 6. 5초마다 재탐지합니다. UniFi reprovision으로 인터페이스가 재생성되거나 주소·MAC·경로가
    바뀌면 수집 소켓과 관측 정보를 초기화하고 다시 학습합니다.
 
@@ -88,7 +93,9 @@ on-boot framework는 해당 저장소의 설치 안내에 따라 먼저 설치�
 증거가 관측되면 보정을 중단하고 자신이 변경한 버전 설정을 복원합니다.**
 버전 강제는 인터페이스 전체에 영향을 주므로 혼합 서비스가 관측된 인터페이스도
 보정하지 않습니다. IGMPv3의 `EXCLUDE {}`는 ASM 구독으로 추적할 수 있지만,
-source 주소를 포함한 record와 ALLOW/BLOCK 변경은 보정을 차단합니다.
+source 주소를 포함한 record와 비어 있지 않은 ALLOW/BLOCK 변경은 보정을 차단합니다.
+빈 ALLOW/BLOCK 변경은 무시하며, `224.0.0.0/24`의 로컬 제어용 구독은 SSM으로
+분류하지 않습니다.
 
 패킷 관측은 제공자의 기능을 완전히 증명하지 못합니다. 처음에는 여러 Query 주기를
 포함하는 dry-run으로 확인하세요. IGMPv3/SSM 제공자는 `off`를 사용하고 원래의
@@ -170,7 +177,10 @@ systemctl status iptv-igmp-keeper.service --no-pager
 1.5 MiB로 회전합니다. 상태 변경·fallback Query·오류와 시간당 heartbeat만 남깁니다.
 상태 파일은 `/run/iptv-igmp-keeper`에 기록하여 지속 저장소의 쓰기를 줄입니다.
 `--status`는 마지막 snapshot과 경과 시간을 보여주며 없거나 오래되면 종료 코드 1을
-반환합니다. 최신 상태 파일만으로 정상 재생을 보장할 수는 없습니다.
+반환합니다. `reports_sent`와 `fallback_queries_sent`는 시작 후 전송 호출이 성공한
+횟수입니다. `last_report_age_seconds`, `memberships`, `source_filter_groups`로
+마지막 전송 시점·구독 응답 시간·차단한 그룹을 확인할 수 있습니다. 전송 호출 성공은
+상대방의 수신 확인을 의미하지 않으며, 최신 상태 파일만으로 정상 재생을 보장하지 않습니다.
 
 비정상 종료 후에는 같은 부팅의 override journal로 기존 값을 복원합니다.
 현재 값과 인터페이스가 자신이 변경한 대상에 해당할 때만 복원합니다.

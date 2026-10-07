@@ -27,7 +27,7 @@ class ProtocolTests(unittest.TestCase):
     def test_queries_and_options(self):
         for code, tail, version in [(0, b'', 1), (50, b'', 2), (50, b'\x02\x7d\0\0', 3)]:
             data = packet(struct.pack('!BBH4s', 0x11, code, 0, b'\0' * 4) + tail, b'\x94\x04\0\0')
-            self.assertEqual(k.parse_packet(data), ('query', version, '0.0.0.0'))
+            self.assertEqual(k.parse_packet(data), ('query', version, '0.0.0.0', 10 if version == 1 else 5))
 
     def test_invalid_packets(self):
         data = packet(b'\x16\0\0\0' + socket.inet_aton('239.1.2.3'))
@@ -151,7 +151,7 @@ class LifecycleTests(unittest.TestCase):
             keeper.scan()
             self.assertEqual(keeper.last_query, {'lan': 1000})
             keeper.last_query.clear()
-            keeper.members.observe('lan', '', ('query', 3, '0.0.0.0'), 990)
+            keeper.members.observe('lan', '', ('query', 3, '0.0.0.0'), 995)
             keeper.scan()
             self.assertFalse(keeper.last_query)
 
@@ -214,6 +214,114 @@ class LifecycleTests(unittest.TestCase):
                 patch.object(Path, 'write_text', side_effect=lambda text: events.append(text)):
             override.apply('wan', (1, '192.0.2.1', 'aa'))
         self.assertEqual(events, ['journal', '2\n'])
+
+
+class RenewalRegressionTests(unittest.TestCase):
+    def test_link_local_reports_do_not_block_iptv(self):
+        members = k.Memberships()
+        members.observe('wan', '', ('query', 2, '0.0.0.0'), 0)
+        for mode in ('asm', 'source-filter'):
+            for group in ('224.0.0.1', '224.0.0.22', '224.0.0.251', '192.0.2.1'):
+                members.observe('lan', 'client', ('records', [(mode, group)]), 1)
+        self.assertEqual(members.clients, {})
+        self.assertTrue(members.permit('wan', 'auto')[0])
+
+    def test_real_source_filter_and_ssm_still_block(self):
+        for mode, group in [('source-filter', '239.1.2.3'), ('asm', '232.1.2.3')]:
+            members = k.Memberships()
+            members.observe('wan', '', ('query', 2, '0.0.0.0'), 0)
+            members.observe('lan', 'client', ('records', [(mode, group)]), 1)
+            self.assertFalse(members.permit('wan', 'auto')[0])
+            self.assertFalse(members.permit('wan', 'v2')[0])
+
+    def test_empty_source_deltas_are_noops(self):
+        body = b'\x22\0\0\0\0\0\0\x03' + record(2) + record(5) + record(6)
+        self.assertEqual(k.parse_packet(packet(body)), ('records', [('asm', '239.1.2.3')]))
+
+    def test_v3_query_decodes_response_deadline(self):
+        body = struct.pack('!BBH4s', 0x11, 0x96, 0, b'\0' * 4) + b'\x02\x7d\0\0'
+        event = k.parse_packet(packet(body))
+        self.assertEqual(event, ('query', 3, '0.0.0.0', 35.2))
+        members = k.Memberships()
+        members.observe('lan', '', event, 100)
+        self.assertAlmostEqual(members.query_deadlines[('lan', '0.0.0.0')], 135.2)
+
+    def test_external_query_without_response_cannot_starve_fallback(self):
+        members = k.Memberships()
+        members.observe('lan', 'client', ('records', [('asm', '239.1.2.3')]), 0)
+        members.observe('lan', '', ('query', 2, '0.0.0.0', 10), 145)
+        self.assertEqual(members.fallback_groups('lan', {'239.1.2.3'}, 150, 150, 0), [])
+        self.assertEqual(members.fallback_groups('lan', {'239.1.2.3'}, 155, 150, 0), ['239.1.2.3'])
+
+    def test_other_channels_report_and_specific_query_do_not_hide_silent_group(self):
+        members = k.Memberships()
+        members.observe('lan', 'client', ('records', [('asm', '239.1.2.3')]), 0)
+        members.observe('lan', 'client', ('records', [('asm', '239.1.2.4')]), 145)
+        members.observe('lan', '', ('query', 2, '239.1.2.4', 25), 145)
+        self.assertEqual(members.fallback_groups('lan', {'239.1.2.3', '239.1.2.4'}, 150, 150, 0),
+                         ['239.1.2.3'])
+
+    def test_healthy_querier_responses_suppress_fallback(self):
+        members = k.Memberships()
+        for now in range(0, 900, 5):
+            if now % 125 == 0:
+                members.observe('lan', '', ('query', 2, '0.0.0.0', 10), now)
+            if now % 125 == 5:
+                members.observe('lan', 'client', ('records', [('asm', '239.1.2.3')]), now)
+            self.assertEqual(members.fallback_groups('lan', {'239.1.2.3'}, now, 150, 0), [])
+
+    def test_15_minutes_of_refresh_with_local_control_reports_and_unresponsive_querier(self):
+        cfg = k.read_config()
+        group = '239.192.60.13'
+        info = {'upstream': 'wan', 'downstream': ['lan'], 'reason': 'ready',
+                'vifs': {0: 'wan', 1: 'lan'},
+                'routes': [{'source': '192.0.2.1', 'group': group, 'iif': 0, 'packets': 0, 'oifs': [1]}]}
+        sends, pending_responses = [], []
+        now = 0
+        def send(interface, address, sent_group, query=False):
+            sends.append((now, query, sent_group))
+            if query:
+                pending_responses.append(now + 5)
+        with patch.object(k.time, 'monotonic', side_effect=lambda: now), \
+                patch.object(k, 'discover', return_value=info), patch.object(k.Keeper, 'reconcile'), \
+                patch.object(k, 'send_igmp', side_effect=send), patch.object(Path, 'write_text'), \
+                patch.object(Path, 'replace'):
+            keeper = k.Keeper(cfg, dry=True)
+            keeper.dry = False  # Exercise sending with mocked socket/file effects; override stays dry.
+            keeper.identities = {'wan': (1, '192.0.2.1', 'aa'), 'lan': (2, '192.0.2.2', 'bb')}
+            keeper.members.observe('lan', 'stb', ('records', [('asm', group)]), 0)
+            for now in range(0, 901, 5):
+                info['routes'][0]['packets'] += 50
+                if now % 125 == 0:
+                    keeper.members.observe('wan', '', ('query', 2, '0.0.0.0', 10), now)
+                    keeper.members.observe('lan', '', ('query', 2, '0.0.0.0', 10), now)
+                keeper.members.observe('lan', 'stb', ('records', [('asm', '224.0.0.251')]), now)
+                if now in pending_responses:
+                    keeper.members.observe('lan', 'stb', ('records', [('asm', group)]), now)
+                keeper.scan()
+                self.assertTrue(keeper.snapshot['enabled'], keeper.snapshot)
+                if now >= 5:
+                    self.assertEqual(keeper.snapshot['active_groups'], [group])
+            report_times = [stamp for stamp, query, _ in sends if not query]
+            self.assertGreaterEqual(len(report_times), 15)
+            self.assertTrue(all(b - a <= 60 for a, b in zip(report_times, report_times[1:])))
+            self.assertGreaterEqual(keeper.snapshot['fallback_queries_sent'], 5)
+            self.assertEqual(keeper.snapshot['reports_sent'], len(report_times))
+            self.assertEqual(keeper.snapshot['source_filter_groups'], [])
+            self.assertLessEqual(keeper.snapshot['last_report_age_seconds'][group], 60)
+
+    def test_blocking_groups_are_visible_in_status(self):
+        cfg = k.read_config()
+        info = {'upstream': 'wan', 'downstream': ['lan'], 'reason': 'ready',
+                'vifs': {0: 'wan', 1: 'lan'}, 'routes': []}
+        with patch.object(k, 'discover', return_value=info), patch.object(k.Keeper, 'reconcile'):
+            keeper = k.Keeper(cfg, dry=True)
+            now = k.time.monotonic()
+            keeper.members.observe('lan', 'client', ('records', [('source-filter', '239.1.2.3')]), now)
+            keeper.scan()
+            self.assertFalse(keeper.snapshot['enabled'])
+            self.assertEqual(keeper.snapshot['source_filter_groups'], ['239.1.2.3'])
+            self.assertEqual(keeper.snapshot['memberships'][0]['mode'], 'source-filter')
 
 
 if __name__ == '__main__':

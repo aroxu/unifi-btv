@@ -19,7 +19,7 @@ import struct
 import sys
 import time
 
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 DEFAULTS = {
     'interfaces': {'upstream': 'auto', 'downstream': 'auto'},
     'igmp': {'force_version': 'auto', 'query_downstream': 'fallback',
@@ -169,9 +169,10 @@ def parse_packet(packet):
     group = socket.inet_ntoa(data[4:8])
     if kind == 0x11:
         if len(data) == 8:
-            return ('query', 1 if code == 0 else 2, group)
+            return ('query', 1 if code == 0 else 2, group, code / 10 if code else 10)
         if len(data) >= 12 and len(data) == 12 + 4 * struct.unpack_from('!H', data, 10)[0]:
-            return ('query', 3, group)
+            response = code if code < 128 else ((code & 15) | 16) << (((code >> 4) & 7) + 3)
+            return ('query', 3, group, response / 10)
     elif kind in (0x12, 0x16, 0x17) and len(data) == 8:
         return ('records', [('leave' if kind == 0x17 else 'asm', group)])
     elif kind == 0x22:
@@ -184,6 +185,8 @@ def parse_packet(packet):
             offset += 8 + 4 * count + 4 * aux
             if offset > len(data) or record_type not in range(1, 7):
                 return None
+            if record_type in (5, 6) and count == 0:
+                continue  # Empty ALLOW/BLOCK deltas carry no source-filter change.
             # Only EXCLUDE {} is unambiguously ASM. Never emulate source filters.
             mode = ('asm' if record_type in (2, 4) and count == 0 else
                     'leave' if record_type in (1, 3) and count == 0 else 'source-filter')
@@ -197,12 +200,19 @@ class Memberships:
     def __init__(self):
         self.clients = {}  # (interface, MAC, group) -> (mode, monotonic timestamp)
         self.queries = {}  # (interface, version) -> timestamp
+        self.query_deadlines = {}  # (interface, group) -> response deadline
 
     def observe(self, interface, mac, event, now, allowed=None):
         if event[0] == 'query':
             self.queries[(interface, event[1])] = now
+            response_seconds = event[3] if len(event) > 3 else 10
+            self.query_deadlines[(interface, event[2])] = now + response_seconds
             return
         for mode, group in event[1]:
+            address = ipaddress.IPv4Address(group)
+            if not address.is_multicast or address in ipaddress.IPv4Network('224.0.0.0/24'):
+                # Local control groups (e.g. mDNS) are not IPTV/SSM evidence.
+                continue
             key = (interface, mac, group)
             if mode == 'leave':
                 self.clients.pop(key, None)
@@ -215,6 +225,26 @@ class Memberships:
     def expire(self, now, stale, evidence):
         self.clients = {k: v for k, v in self.clients.items() if now - v[1] < stale}
         self.queries = {k: v for k, v in self.queries.items() if now - v < evidence}
+        self.query_deadlines = {k: v for k, v in self.query_deadlines.items() if now < v}
+
+    def fallback_groups(self, interface, groups, now, delay, started):
+        """Query presence is not proof of working membership renewal.
+
+        Check each routed group separately: another channel's Reports must not
+        hide a silent group. Give external queries their advertised response
+        window, but allow recovery after that window if Reports remain absent.
+        """
+        due = []
+        for group in sorted(groups):
+            if not asm_group(group):
+                continue
+            newest = max([stamp for (name, _, subscribed), (_, stamp) in self.clients.items()
+                          if name == interface and subscribed == group] or [started])
+            deadline = max(self.query_deadlines.get((interface, '0.0.0.0'), 0),
+                           self.query_deadlines.get((interface, group), 0))
+            if now - newest >= delay and now >= deadline:
+                due.append(group)
+        return due
 
     def permit(self, upstream, mode):
         if mode == 'off':
@@ -328,6 +358,8 @@ class Keeper:
         self.sockets, self.identities = {}, {}
         self.previous_counters, self.traffic = {}, {}
         self.last_query, self.last_refresh = {}, {}
+        self.reports_sent, self.queries_sent = 0, 0
+        self.last_sent_report, self.last_sent_query = {}, {}
         self.started = time.monotonic()
         self.last_heartbeat = self.started
         self.signature = None
@@ -354,6 +386,8 @@ class Keeper:
             self.traffic.clear()
             self.last_query.clear()
             self.last_refresh.clear()
+            self.last_sent_report.clear()
+            self.last_sent_query.clear()
             self.started = time.monotonic()
             try:
                 for name in names:
@@ -424,31 +458,50 @@ class Keeper:
                 if now - self.last_refresh.get(group, -1e9) >= interval:
                     if not self.dry:
                         send_igmp(upstream, self.identities[upstream][1], group)
+                        self.reports_sent += 1
+                        self.last_sent_report[group] = now
                     self.last_refresh[group] = now
             if self.cfg['igmp']['query_downstream'] == 'fallback':
                 delay = self.cfg.getfloat('igmp', 'fallback_after_seconds')
                 for name in downstream:
-                    # Ask only where traffic exists and no external querier is recent.
-                    external = max([t for (iface, _), t in self.members.queries.items()
-                                    if iface == name] or [self.started])
-                    reports = [t for (iface, _, _), (_, t) in self.members.clients.items() if iface == name]
-                    newest = max(reports or [self.started])
-                    if (any(iface == name for iface, _ in self.traffic)
-                            and now - max(external, newest, self.last_query.get(name, self.started)) >= delay):
+                    groups = {group for iface, group in self.traffic if iface == name}
+                    due = self.members.fallback_groups(name, groups, now, delay, self.started)
+                    if due and now - self.last_query.get(name, self.started) >= delay:
                         if not self.dry:
                             send_igmp(name, self.identities[name][1], '0.0.0.0', query=True)
+                            self.queries_sent += 1
+                            self.last_sent_query[name] = now
                         self.last_query[name] = now
-                        LOG.info('%sGeneral Query fallback on %s', 'Would send ' if self.dry else '', name)
+                        LOG.info('%sGeneral Query fallback on %s; stale/missing reports: %s',
+                                 'Would send ' if self.dry else '', name, ', '.join(due))
         else:
             self.overrides.restore()
         self.last_refresh = {g: t for g, t in self.last_refresh.items() if g in active}
+        # Retain recent send evidence long enough to diagnose a stopped stream.
+        self.last_sent_report = {g: t for g, t in self.last_sent_report.items() if now - t < 3600}
+        membership_ages = {}
+        for (name, _, group), (mode, stamp) in self.members.clients.items():
+            key = (name, group, mode)
+            membership_ages[key] = min(membership_ages.get(key, float('inf')), now - stamp)
         self.snapshot = {'version': VERSION, 'pid': os.getpid(), 'updated_at': time.time(),
                          'dry_run': self.dry, 'upstream': upstream, 'downstream': downstream,
                          'enabled': permit, 'reason': reason, 'refresh_interval': interval,
                          'active_groups': active, 'client_memberships': len(self.members.clients),
+                         'source_filter_groups': sorted({group for (_, _, group), (mode, _)
+                                                         in self.members.clients.items() if mode == 'source-filter'}),
+                         'reports_sent': self.reports_sent, 'fallback_queries_sent': self.queries_sent,
+                         'last_report_age_seconds': {g: round(now - t, 1)
+                                                     for g, t in sorted(self.last_sent_report.items())},
+                         'last_fallback_query_age_seconds': {n: round(now - t, 1)
+                                                             for n, t in sorted(self.last_sent_query.items())},
+                         'memberships': [{'interface': n, 'group': g, 'mode': mode,
+                                          'report_age_seconds': round(age, 1),
+                                          'recent_traffic': (n, g) in self.traffic}
+                                         for (n, g, mode), age in sorted(membership_ages.items())],
                          'queries': [{'interface': n, 'version': v, 'age_seconds': round(now - t, 1)}
                                      for (n, v), t in sorted(self.members.queries.items())]}
-        signature = (upstream, tuple(downstream), permit, reason, tuple(active))
+        signature = (upstream, tuple(downstream), permit, reason, tuple(active),
+                     tuple(self.snapshot['source_filter_groups']))
         if signature != self.signature:
             LOG.info('State: %s', json.dumps(self.snapshot, sort_keys=True))
             self.signature = signature

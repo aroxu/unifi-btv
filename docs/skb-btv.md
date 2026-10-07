@@ -42,3 +42,19 @@ The `v2` override still honors v1/v3 and source-filter protection. Unlike the or
 script, this project does not force the downstream interface to v2 and does not
 query it every minute. It may therefore behave differently on the original gateway.
 Check report visibility before treating the adaptive build as a replacement.
+
+
+## Adaptive 0.1.0 follow-up (2026-10-08)
+
+A gateway log showed valid upstream IGMPv2 Queries and initially active IPTV groups,
+followed by `source-filter/SSM evidence present` and disabled renewal. Playback then
+stopped after a few minutes. The old snapshot did not list blocking group addresses,
+so it does not establish whether that particular record was local control traffic or
+an actual source filter.
+
+Code review found that 0.1.0 classified all non-ASM groups, including `224.0.0/24`
+local control subscriptions, as source-filter evidence. Version 0.1.1 removes that
+false positive and ignores empty ALLOW/BLOCK deltas. It also fixes fallback starvation
+when an external querier is seen but clients do not answer. Status now identifies
+blocking groups and successful send counts. The fix passes a simulated 15-minute
+renewal regression; post-update gateway playback still needs confirmation.

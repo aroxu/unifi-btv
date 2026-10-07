@@ -1,5 +1,39 @@
 # Troubleshooting
 
+## Version 0.1.0 stops after a few minutes
+
+If upstream v2 Queries are present but status says `enabled: false` and
+`source-filter/SSM evidence present`, the keeper has stopped refreshing. Version
+0.1.0 incorrectly classified local control subscriptions such as `224.0.0.251`
+(mDNS) as SSM. Empty IGMPv3 ALLOW/BLOCK deltas also incorrectly blocked operation.
+Version 0.1.1 ignores those records while retaining actual source-filter/SSM guards.
+
+Update in a root SSH session:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aroxu/unifi-btv/main/install.sh | bash
+python3 /data/iptv-igmp-keeper/keeper.py --version
+```
+
+Expect `0.1.1` or newer. After updating, change the TV channel once to establish
+fresh reports and traffic; a long-expired stream is not automatically resurrected.
+Then inspect status after the upstream Query has been observed (allow a few minutes):
+
+```sh
+python3 /data/iptv-igmp-keeper/keeper.py --config /data/iptv-igmp-keeper/config.ini --status
+```
+
+For an eligible v2 ASM service, `enabled` should be true, `active_groups` should
+contain the channel, and `reports_sent` should increase on subsequent refreshes.
+`last_report_age_seconds` should remain near the configured interval while active.
+The counters record successful send calls, not ISP acknowledgment.
+
+If protection still blocks operation, `source_filter_groups` identifies the blocking
+groups and `memberships` includes their modes, report ages and traffic eligibility.
+Do not disable protection blindly: an actual source-specific subscription requires
+native IGMPv3 support. Supply this status and recent log lines when reporting it.
+
+
 ## No interfaces / no active groups
 
 Run `--discover` using the same `--config` as the service. Inspect:
@@ -34,9 +68,11 @@ native proxy compatibility. Changing to `v2` does not bypass the guard. The daem
 only understands ASM subscriptions well enough to synthesize Reports.
 
 A General Query fallback is possible only once upstream v2 is permitted and downstream
-traffic is recent. It is suppressed by any recent downstream querier and by recent
-client reports. A continuously active querier with invisible reports needs a capture/
-bridge fix, not more queries. Set `query_downstream = off` to disable fallback entirely.
+traffic is recent. A fresh report for that group suppresses fallback; another
+channel's report does not. External Queries defer fallback only through their
+advertised response window. Query presence alone is not proof that clients answered.
+If fallback also gets no response, inspect packet visibility and the bridge/STB path.
+Set `query_downstream = off` to disable fallback entirely.
 
 ## Stops after roughly a few minutes
 

@@ -16,6 +16,11 @@ The original fixed-configuration workaround worked with SK Broadband B tv. The n
 adaptive daemon has not yet been validated on that gateway or across UniFi firmware.
 See [the B tv field report](docs/skb-btv.md) and [validation details](docs/validation.md).
 
+**Upgrade from 0.1.0 to 0.1.1** if playback stops after a few minutes with
+`source-filter/SSM evidence present`: local control multicast could incorrectly
+disable renewal. The fix retains protection for actual source filters and SSM.
+See [troubleshooting](docs/troubleshooting.md#version-010-stops-after-a-few-minutes).
+
 ## How it works
 
 1. Read `/proc/net/ip_mr_vif` and `/proc/net/ip_mr_cache`. Choose an upstream only
@@ -30,9 +35,11 @@ See [the B tv field report](docs/skb-btv.md) and [validation details](docs/valid
 4. Refresh only ASM groups with a fresh downstream report, a matching route output,
    and a recently increasing multicast route packet counter. Groups in `224.0.0/24`
    and `232/8` are never refreshed. No upstream Leave is synthesized.
-5. When permitted to operate in v2, send a downstream General Query only where
-   traffic is active and both client reports and external queries have been absent
-   for 150 seconds. The fallback is rate limited per interface and can be disabled.
+5. When permitted to operate in v2, send a downstream General Query where a routed,
+   active ASM group has had no client report for 150 seconds. Honor an external
+   Query's advertised response window, then retry if reports are still missing.
+   Other groups' reports cannot hide a silent channel. Fallback is rate limited per
+   interface and can be disabled.
 6. Re-scan every five seconds. Recreated interfaces, IPv4/MAC changes and topology
    changes reset observations and capture sockets. Do not reuse stale client evidence.
 
@@ -45,8 +52,10 @@ See [the B tv field report](docs/skb-btv.md) and [validation details](docs/valid
   evidence are present.** The original owned sysctl value is restored. Mixed-service
   interfaces are blocked as a whole because version enforcement is interface-wide.
 - IGMPv3 `EXCLUDE {}` represents ASM and can be tracked. Source-bearing records,
-  including ALLOW/BLOCK changes, block intervention; the daemon does not attempt
+  including nonempty ALLOW/BLOCK changes, block intervention; the daemon does not attempt
   incomplete IGMPv3 state reconstruction. Empty INCLUDE removes that client's entry.
+  Empty ALLOW/BLOCK deltas are no-ops. Link-local control groups in `224.0.0.0/24`
+  are ignored instead of being classified as SSM.
 - Evidence is observational, not proof of provider capability. Start in dry-run and
   observe at least several Query cycles. A missed packet or an unseen client remains
   a limitation. On IGMPv3/SSM providers use `off` and fix the native proxy configuration.
@@ -157,7 +166,10 @@ Logs: `/data/iptv-igmp-keeper/keeper.log`, 512 KiB per file, two backups (about 
 Only changes, fallback queries, errors and hourly heartbeat are logged. Status is
 atomically replaced under `/run/iptv-igmp-keeper`, avoiding persistent flash writes.
 `--status` displays the latest snapshot and its age; stale/missing status exits 1.
-A fresh snapshot is not a guarantee that IPTV works. MAC addresses are not logged;
+`reports_sent` and `fallback_queries_sent` count successful send calls since startup;
+`last_report_age_seconds`, `memberships` and `source_filter_groups` explain whether
+renewal is running and which groups block it. Successful sends are not proof of
+delivery. A fresh snapshot is not a guarantee that IPTV works. MAC addresses are not logged;
 interface/group/IP information can still identify a network.
 
 A same-boot override journal allows restoration after an unclean daemon restart.

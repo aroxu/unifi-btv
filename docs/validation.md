@@ -33,6 +33,20 @@ The CI workflow is provided but has not been run on GitHub in this session.
 - The one-line source endpoint is `aroxu/unifi-btv` on `main`; a single codeload archive
   supplies all files from the same snapshot. Actual gateway installation remains pending.
 
+## Renewal regression fix: 0.1.1 (2026-10-08)
+
+- 33 local tests passed (the existing 24 plus nine renewal regression tests).
+- A simulated 15-minute timeline includes upstream v2 Queries, local mDNS Reports,
+  an external downstream querier without responses, and STB responses to fallback.
+  Upstream Reports continue at no more than 60s intervals after initial detection.
+  This is a mocked-clock test, not a 15-minute live gateway measurement.
+- Tests retain actual SSM/source-filter blocking, ignore empty source deltas, verify
+  IGMPv3 Max Response Code decoding and honor response deadlines. Fresh reports
+  suppress fallback; another channel's report cannot hide a missing response.
+- Status tests verify blocking groups and send counters. Python compilation passed.
+- The reported gateway log confirms disabled renewal due to the old source-filter
+  guard, but does not reveal its triggering group. Post-update playback is pending.
+
 ## Gateway acceptance procedure (pending)
 
 1. Record model, UniFi OS version, Python version, proxy configuration and interface
